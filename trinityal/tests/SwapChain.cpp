@@ -132,7 +132,7 @@ namespace
 // OCCLUSION_SAMPLES_REQUIRED consecutive samples was covered (or it is minimized); a single visible
 // sample resets the run.
 const int OCCLUSION_SAMPLES_PER_TICK = 8;
-const int OCCLUSION_SAMPLES_REQUIRED = 32; // 4 fully covered ticks (~1s) before the throttle engages
+const int OCCLUSION_SAMPLES_REQUIRED = 64; // 8 fully covered ticks (~2s) before the throttle engages
 
 // Sample positions come from the R2 quasirandom sequence (generalised golden ratio phi2, the "plastic
 // ratio"): successive points are evenly distributed over the window without aligning to window geometry.
@@ -244,7 +244,7 @@ bool SampleWindowOcclusion( HWND hwnd )
 // Interactive occlusion probe: presents the primary swapchain (bound to the visible 640x480 window) in a
 // loop while sampling occlusion exactly like the Tr2MainWindow WINDOW_HIDDEN fix: every 250ms tick, 8
 // quasirandom points are tested against the opaque windows above us in Z-order; the throttle engages only
-// after 32 consecutive covered samples (~1s fully covered) and releases on the first visible sample.
+// after 64 consecutive covered samples (~2s fully covered) and releases on the first visible sample.
 // While "hidden" it emulates the WINDOW_HIDDEN behaviour (20ms sleep + render 1/50, matching
 // TriDevice::Throttle + ShouldSkipFrame). Cover / half-cover / minimize the window and read the log;
 // state transitions are logged with the covered-sample counter.
