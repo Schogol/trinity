@@ -120,6 +120,7 @@ TEST_F( SwapChain, CanPresentSwapChain )
 
 #include <dwmapi.h>
 #include <cmath>
+#include <share.h>
 
 #pragma comment( lib, "dwmapi.lib" )
 
@@ -252,8 +253,9 @@ TEST_F( SwapChain, OcclusionThrottleProbe )
 {
 	ENSURE_GPU_OR_SKIP
 
-	FILE* log = nullptr;
-	fopen_s( &log, "occlusion_throttle_test.log", "w" );
+	// _fsopen with _SH_DENYWR rather than fopen_s (which denies all sharing) so the log can be read
+	// and tailed while the probe is running.
+	FILE* log = _fsopen( "occlusion_throttle_test.log", "w", _SH_DENYWR );
 	if( log )
 	{
 		fprintf( log, "-- WINDOW_HIDDEN throttle demo (accumulating R2-sampled occlusion, %d samples per "
@@ -277,6 +279,20 @@ TEST_F( SwapChain, OcclusionThrottleProbe )
 	bool occluded = false;
 
 	auto body = [&] {
+		// Closing the render window ends the probe. The window class uses DefWindowProc, so the close
+		// button destroys the HWND but posts no WM_QUIT; without this check the loop would spin forever,
+		// with the destroyed window sampling as "visible" (GetWindowRect fails) and thus unthrottled.
+		if( !::IsWindow( (HWND)WithWindow::GetWindowHandle() ) )
+		{
+			if( log )
+			{
+				fprintf( log, "-- render window closed, exiting --\n" );
+				fflush( log );
+			}
+			::PostQuitMessage( 0 ); // DoLoopProcessing() sees WM_QUIT and ends the RunLoop
+			return;
+		}
+
 		// Sample on the same 250ms cadence as the Tr2MainWindow occlusion timer.
 		LARGE_INTEGER now;
 		QueryPerformanceCounter( &now );
