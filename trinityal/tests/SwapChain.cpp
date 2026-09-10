@@ -118,67 +118,135 @@ TEST_F( SwapChain, CanPresentSwapChain )
 	}
 }
 
+#include <dwmapi.h>
+#include <cmath>
+
+#pragma comment( lib, "dwmapi.lib" )
+
 namespace
 {
-// Win32 occlusion check (DXGI-independent): true if the window is minimized, or every sampled point is
-// covered by another opaque top-level window. Mirrors the validated Python prototype: sample 5 points
-// (centre + 4 inset corners), and at each find the topmost OPAQUE window (skipping see-through overlays:
-// WS_EX_LAYERED / WS_EX_TRANSPARENT / WS_EX_TOOLWINDOW, e.g. the Alt+Tab switcher).
-bool PointTopIsWindow( HWND target, int px, int py )
+// Win32 occlusion check (DXGI-independent), mirroring the Tr2MainWindow_Windows.cpp fix exactly: each
+// 250ms tick tests a batch of quasirandomly placed points against the opaque top-level windows above us
+// in Z-order (one EnumWindows pass per tick). The window only counts as hidden once every sample of
+// OCCLUSION_SAMPLES_REQUIRED consecutive samples was covered (or it is minimized); a single visible
+// sample resets the run.
+const int OCCLUSION_SAMPLES_PER_TICK = 8;
+const int OCCLUSION_SAMPLES_REQUIRED = 32; // 4 fully covered ticks (~1s) before the throttle engages
+
+// Sample positions come from the R2 quasirandom sequence (generalised golden ratio phi2, the "plastic
+// ratio"): successive points are evenly distributed over the window without aligning to window geometry.
+const double INVERSE_PHI2 = 1.0 / 1.32471795724474602596;
+double g_occlusionSeqX = 0.5;
+double g_occlusionSeqY = 0.5;
+int g_occlusionCoveredSamples = 0;
+
+// Suspended UWP/store apps keep a WS_VISIBLE top-level window in the Z-order that draws nothing; without
+// this check such a window would count as an occluder and could throttle a perfectly visible client.
+bool IsWindowCloaked( HWND hwnd )
+{
+	DWORD cloaked = 0;
+	return SUCCEEDED( ::DwmGetWindowAttribute( hwnd, DWMWA_CLOAKED, &cloaked, sizeof( cloaked ) ) ) && cloaked != 0;
+}
+
+// One EnumWindows pass per tick: collect the rects of every opaque, uncloaked window above hwnd in
+// Z-order. EnumWindows enumerates topmost first, so collection stops at hwnd - nothing below it can
+// occlude it - and each sample point then costs only a few rect tests.
+void CollectOccludersAbove( HWND hwnd, std::vector<RECT>& rects )
 {
 	struct Ctx
 	{
-		int px, py;
-		HWND result;
-	} ctx = { px, py, nullptr };
+		HWND target;
+		std::vector<RECT>* rects;
+	} ctx = { hwnd, &rects };
 	::EnumWindows(
-		[]( HWND hwnd, LPARAM lp ) -> BOOL {
+		[]( HWND other, LPARAM lp ) -> BOOL {
 			Ctx* c = reinterpret_cast<Ctx*>( lp );
-			if( !::IsWindowVisible( hwnd ) || ::IsIconic( hwnd ) )
+			if( other == c->target )
+				return FALSE;
+			if( !::IsWindowVisible( other ) || ::IsIconic( other ) )
 				return TRUE;
-			if( ::GetWindowLongW( hwnd, GWL_EXSTYLE ) & ( WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW ) )
+			if( ::GetWindowLongW( other, GWL_EXSTYLE ) & ( WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW ) )
+				return TRUE;
+			if( IsWindowCloaked( other ) )
 				return TRUE;
 			RECT r;
-			if( !::GetWindowRect( hwnd, &r ) )
-				return TRUE;
-			if( c->px >= r.left && c->px < r.right && c->py >= r.top && c->py < r.bottom )
-			{
-				c->result = hwnd; // topmost opaque window covering this point
-				return FALSE;
-			}
+			if( ::GetWindowRect( other, &r ) )
+				c->rects->push_back( r );
 			return TRUE;
 		},
 		reinterpret_cast<LPARAM>( &ctx ) );
-	return ctx.result == target;
 }
 
-bool IsWindowOccluded( HWND hwnd )
+// Per-tick occlusion sample; returns whether the window should currently count as hidden. Stateful: the
+// covered-sample run accumulates across ticks (see block comment above).
+bool SampleWindowOcclusion( HWND hwnd )
 {
 	if( !hwnd )
+	{
+		g_occlusionCoveredSamples = 0;
 		return false;
+	}
 	if( ::IsIconic( hwnd ) )
-		return true; // minimized
+	{
+		g_occlusionCoveredSamples = 0;
+		return true; // minimized is unambiguous, no sample accumulation needed
+	}
 	RECT r;
 	if( !::GetWindowRect( hwnd, &r ) )
+	{
+		g_occlusionCoveredSamples = 0;
 		return false;
+	}
 	const int w = r.right - r.left;
 	const int h = r.bottom - r.top;
 	if( w <= 0 || h <= 0 )
-		return true;
-	const double fx[5] = { 0.5, 0.12, 0.88, 0.12, 0.88 };
-	const double fy[5] = { 0.5, 0.12, 0.12, 0.88, 0.88 };
-	for( int i = 0; i < 5; ++i )
 	{
-		if( PointTopIsWindow( hwnd, r.left + int( fx[i] * w ), r.top + int( fy[i] * h ) ) )
-			return false; // our window is visible at this point
+		g_occlusionCoveredSamples = 0;
+		return true;
 	}
-	return true; // every sampled point covered by another opaque window
+
+	std::vector<RECT> occluders;
+	CollectOccludersAbove( hwnd, occluders );
+
+	for( int i = 0; i < OCCLUSION_SAMPLES_PER_TICK; ++i )
+	{
+		g_occlusionSeqX += INVERSE_PHI2;
+		g_occlusionSeqX -= std::floor( g_occlusionSeqX );
+		g_occlusionSeqY += INVERSE_PHI2 * INVERSE_PHI2;
+		g_occlusionSeqY -= std::floor( g_occlusionSeqY );
+		const POINT pt = { r.left + LONG( g_occlusionSeqX * w ), r.top + LONG( g_occlusionSeqY * h ) };
+		bool covered = false;
+		for( const RECT& occluder : occluders )
+		{
+			if( ::PtInRect( &occluder, pt ) )
+			{
+				covered = true;
+				break;
+			}
+		}
+		// A point no occluder covers can still be invisible: outside every monitor (window dragged or
+		// stranded off-screen). Count those as covered, as the topmost-window-at-point variant did.
+		if( !covered && ::MonitorFromPoint( pt, MONITOR_DEFAULTTONULL ) == nullptr )
+			covered = true;
+		if( !covered )
+		{
+			g_occlusionCoveredSamples = 0;
+			return false;
+		}
+	}
+	if( g_occlusionCoveredSamples < OCCLUSION_SAMPLES_REQUIRED )
+		g_occlusionCoveredSamples += OCCLUSION_SAMPLES_PER_TICK;
+	return g_occlusionCoveredSamples >= OCCLUSION_SAMPLES_REQUIRED;
 }
 }
 
 // Interactive occlusion probe: presents the primary swapchain (bound to the visible 640x480 window) in a
-// loop and logs the DXGI Present HRESULT + fps. Cover / minimize / half-cover the window and read the log;
-// DXGI_STATUS_OCCLUDED should appear only when the window is fully covered or minimized.
+// loop while sampling occlusion exactly like the Tr2MainWindow WINDOW_HIDDEN fix: every 250ms tick, 8
+// quasirandom points are tested against the opaque windows above us in Z-order; the throttle engages only
+// after 32 consecutive covered samples (~1s fully covered) and releases on the first visible sample.
+// While "hidden" it emulates the WINDOW_HIDDEN behaviour (20ms sleep + render 1/50, matching
+// TriDevice::Throttle + ShouldSkipFrame). Cover / half-cover / minimize the window and read the log;
+// state transitions are logged with the covered-sample counter.
 //   TrinityALTest_dx12_internal.exe --interactive --gtest_filter=SwapChain.OcclusionThrottleProbe
 TEST_F( SwapChain, OcclusionThrottleProbe )
 {
@@ -188,9 +256,11 @@ TEST_F( SwapChain, OcclusionThrottleProbe )
 	fopen_s( &log, "occlusion_throttle_test.log", "w" );
 	if( log )
 	{
-		fprintf( log, "-- WINDOW_HIDDEN throttle demo: covered/minimized -> Win32-occlusion-gated throttle "
-					  "(20ms sleep + render 1/50, matching TriDevice::Throttle + ShouldSkipFrame). "
-					  "Click window + press a key to exit --\n" );
+		fprintf( log, "-- WINDOW_HIDDEN throttle demo (accumulating R2-sampled occlusion, %d samples per "
+					  "250ms tick, hidden at %d consecutive covered samples). Covered/minimized -> 20ms "
+					  "sleep + render 1/50, matching TriDevice::Throttle + ShouldSkipFrame. "
+					  "Click window + press a key to exit --\n",
+			OCCLUSION_SAMPLES_PER_TICK, OCCLUSION_SAMPLES_REQUIRED );
 		fflush( log );
 	}
 
@@ -198,13 +268,36 @@ TEST_F( SwapChain, OcclusionThrottleProbe )
 	QueryPerformanceFrequency( &freq );
 	LARGE_INTEGER lastLog;
 	QueryPerformanceCounter( &lastLog );
+	LARGE_INTEGER lastTick = lastLog;
+	LARGE_INTEGER stateSince = lastLog;
 	int frame = 0; // loop iterations
 	int renders = 0; // actual renders since last log
 	unsigned skip = 0;
 	uint32_t g = 0;
+	bool occluded = false;
 
 	auto body = [&] {
-		const bool occluded = IsWindowOccluded( (HWND)WithWindow::GetWindowHandle() );
+		// Sample on the same 250ms cadence as the Tr2MainWindow occlusion timer.
+		LARGE_INTEGER now;
+		QueryPerformanceCounter( &now );
+		if( double( now.QuadPart - lastTick.QuadPart ) / double( freq.QuadPart ) >= 0.25 )
+		{
+			lastTick = now;
+			const bool nowOccluded = SampleWindowOcclusion( (HWND)WithWindow::GetWindowHandle() );
+			if( nowOccluded != occluded )
+			{
+				if( log )
+				{
+					const double inState = double( now.QuadPart - stateSince.QuadPart ) / double( freq.QuadPart );
+					fprintf( log, "== transition %s -> %s (%.2fs in previous state, coveredSamples=%d)\n",
+						occluded ? "OCCLUDED" : "visible", nowOccluded ? "OCCLUDED" : "visible", inState,
+						g_occlusionCoveredSamples );
+					fflush( log );
+				}
+				stateSince = now;
+			}
+			occluded = nowOccluded;
+		}
 
 		// Emulate TriDevice::ShouldSkipFrame() for WINDOW_HIDDEN: render only 1 frame in 50.
 		bool doRender = true;
@@ -237,14 +330,14 @@ TEST_F( SwapChain, OcclusionThrottleProbe )
 
 		if( frame % 30 == 0 && log )
 		{
-			LARGE_INTEGER now;
-			QueryPerformanceCounter( &now );
-			const double elapsed = double( now.QuadPart - lastLog.QuadPart ) / double( freq.QuadPart );
-			lastLog = now;
+			LARGE_INTEGER logNow;
+			QueryPerformanceCounter( &logNow );
+			const double elapsed = double( logNow.QuadPart - lastLog.QuadPart ) / double( freq.QuadPart );
+			lastLog = logNow;
 			const double loopFps = elapsed > 0.0 ? 30.0 / elapsed : 0.0;
 			const double renderFps = elapsed > 0.0 ? renders / elapsed : 0.0;
 			renders = 0;
-			fprintf( log, "frame %6d | %-8s throttle=%-3s | loopFps=%9.1f | renderFps=%8.1f\n", frame, occluded ? "OCCLUDED" : "visible", occluded ? "ON" : "off", loopFps, renderFps );
+			fprintf( log, "frame %6d | %-8s throttle=%-3s | samples=%2d | loopFps=%9.1f | renderFps=%8.1f\n", frame, occluded ? "OCCLUDED" : "visible", occluded ? "ON" : "off", g_occlusionCoveredSamples, loopFps, renderFps );
 			fflush( log );
 		}
 	};
