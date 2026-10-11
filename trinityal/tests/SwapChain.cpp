@@ -136,9 +136,9 @@ const int OCCLUSION_SAMPLES_REQUIRED = 64; // 8 fully covered ticks (~2s) before
 
 // Sample positions come from the R2 quasirandom sequence (generalised golden ratio phi2, the "plastic
 // ratio"): successive points are evenly distributed over the window without aligning to window geometry.
-const double INVERSE_PHI2 = 1.0 / 1.32471795724474602596;
-double g_occlusionSeqX = 0.5;
-double g_occlusionSeqY = 0.5;
+const float INVERSE_PHI2 = 1.0f / 1.32471795724474602596f;
+float g_occlusionSeqX = 0.5f;
+float g_occlusionSeqY = 0.5f;
 int g_occlusionCoveredSamples = 0;
 
 // Suspended UWP/store apps keep a WS_VISIBLE top-level window in the Z-order that draws nothing; without
