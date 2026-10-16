@@ -6,6 +6,7 @@
 #include "Utilities/Vector3d.h"
 #include "Utilities/BoundingSphere.h"
 #include "Utilities/BoundingBox.h"
+#include "Utilities/Obb.h"
 #include "TriFrustum.h"
 #include "Particle/Tr2ParticleSystem.h"
 #include "Particle/ITr2GenericEmitter.h"
@@ -16,6 +17,26 @@
 #include "Tr2MeshBase.h"
 
 extern float g_eveSpaceSceneLowUpdateRate;
+
+namespace
+{
+bool HasOverrideBounds( const Vector3& boundsMin, const Vector3& boundsMax )
+{
+	return boundsMax.x != boundsMin.x || boundsMax.y != boundsMin.y || boundsMax.z != boundsMin.z;
+}
+
+bool GetDirectLocalBounds( const Vector3& overrideBoundsMin, const Vector3& overrideBoundsMax, Tr2MeshBase* mesh, Vector3& min, Vector3& max )
+{
+	if( HasOverrideBounds( overrideBoundsMin, overrideBoundsMax ) )
+	{
+		min = overrideBoundsMin;
+		max = overrideBoundsMax;
+		return true;
+	}
+
+	return mesh && mesh->GetBoundingBox( min, max );
+}
+}
 
 EveTransform::EveTransform( IRoot* lockobj ) :
 	Tr2Transform( lockobj ),
@@ -349,6 +370,33 @@ void EveTransform::UpdateVisibility( const EveUpdateContext& updateContext, cons
 void EveTransform::GetRenderables( std::vector<ITr2Renderable*>& renderables )
 {
 	GetRenderables( renderables, nullptr );
+}
+
+bool EveTransform::GetLocalBoundingBox( Vector3& min, Vector3& max )
+{
+	if( !GetDirectLocalBounds( m_overrideBoundsMin, m_overrideBoundsMax, m_mesh, min, max ) )
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool EveTransform::GetOrientedBoundingBox( Vector3& localMin, Vector3& localMax, Matrix& localToWorld ) const
+{
+	if( !GetDirectLocalBounds( m_overrideBoundsMin, m_overrideBoundsMax, m_mesh, localMin, localMax ) )
+	{
+		return false;
+	}
+	localToWorld = m_worldTransform;
+	return true;
+}
+
+bool EveTransform::IsBoundingBoxReady() const
+{
+	Vector3 min;
+	Vector3 max;
+	return GetDirectLocalBounds( m_overrideBoundsMin, m_overrideBoundsMax, m_mesh, min, max );
 }
 
 bool EveTransform::GetBoundingSphere( Vector4& sphere, BoundingSphereQuery query ) const

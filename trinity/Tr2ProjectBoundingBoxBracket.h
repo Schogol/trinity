@@ -23,8 +23,13 @@ public:
 	void UpdateValue( double time );
 
 	void SetEmptyProjection();
+	void UpdateBracket();
 
 protected:
+	void SetFullViewportProjection( const TriViewport& viewport );
+	void ConstrainProjection( const Vector3& center, const Matrix& viewProjection, const TriViewport& viewport );
+	void PublishProjection( const TriViewport& viewport );
+
 	std::wstring m_name;
 
 	//////////////////////////////////////////////////////////////////////////
@@ -33,6 +38,9 @@ protected:
 
 	// Should the coordinates be rounded to the nearest integer? Defaults to true.
 	bool m_integerCoordinates;
+
+	// Draw the consumed bounds and the published rect through the debug renderer.
+	bool m_debugDraw;
 
 	float m_minProjectedWidth;
 	float m_minProjectedHeight;
@@ -54,6 +62,11 @@ protected:
 	float m_projectedHeight;
 	float m_cameraDistance;
 	float m_screenMargin;
+
+	bool m_isProjectionValid;
+	bool m_containsCamera;
+	bool m_extendsOffscreen;
+	bool m_coversViewport;
 };
 
 TYPEDEF_BLUECLASS( Tr2ProjectBoundingBoxBracket );

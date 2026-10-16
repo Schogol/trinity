@@ -213,15 +213,6 @@ void Tr2InstancedMesh::SetInstanceGeometryRes( ITr2InstanceData* res )
 void Tr2InstancedMesh::GetBatches( ITriRenderBatchAccumulator* batches,
 								   const Tr2MeshAreaVector* areas,
 								   const Tr2PerObjectData* data,
-								   float screenSize ) const
-{
-	GetBatches( batches, areas, data, screenSize, false );
-}
-
-
-void Tr2InstancedMesh::GetBatches( ITriRenderBatchAccumulator* batches,
-								   const Tr2MeshAreaVector* areas,
-								   const Tr2PerObjectData* data,
 								   float screenSize,
 								   bool reverseAreas ) const
 {
@@ -289,33 +280,22 @@ void Tr2InstancedMesh::GetBatches( ITriRenderBatchAccumulator* batches,
 		{
 			reversed = !reversed;
 		}
-		if( reversed && !lod->m_reversedIndicesValid )
+		auto indexRange = GetAreaIndexRange( *lod, uint32_t( area->GetIndex() ), primCount, reversed );
+		if( !indexRange.valid )
 		{
 			continue;
 		}
-		auto& lodArea = lod->m_areas[area->GetIndex()];
 
 		Tr2RenderBatch batch;
 		batch.SetMaterial( shadMat );
 		batch.SetPerObjectData( data );
-		batch.SetGeometry( m_vertexDeclaration, lod->m_vertexAllocation, lod->m_indexAllocation );
+		batch.SetGeometry( m_vertexDeclaration, lod->m_vertexAllocation, *indexRange.indices );
 		batch.SetStreamSource( 1, instanceData.buffer, instanceData.stride );
-
-		auto& indices = reversed ? lod->m_reversedIndexAllocation : lod->m_indexAllocation;
-		uint32_t startIndex;
-		if( reversed )
-		{
-			startIndex = indices.GetStartIndex() + lod->m_primitiveCount * 3 - lodArea.m_firstIndex - primCount * 3;
-		}
-		else
-		{
-			startIndex = indices.GetStartIndex() + lodArea.m_firstIndex;
-		}
 
 		batch.SetDrawIndexedInstanced(
 			primCount * 3,
 			instanceData.count,
-			startIndex,
+			indexRange.startIndex,
 			lod->m_vertexAllocation.GetOffset() / lod->m_vertexAllocation.GetStride(),
 			instanceData.offset / instanceData.stride );
 

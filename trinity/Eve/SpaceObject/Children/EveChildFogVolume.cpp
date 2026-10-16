@@ -27,6 +27,8 @@ EveChildFogVolume::EveChildFogVolume( IRoot* lockobj ) :
 	m_settings.fogNoiseFrequency = 15.0f;
 	m_settings.fogNoiseMovementSpeed = Vector3( 0.0f, 0.0f, 0.0f );
 
+	m_settings.reflectionIntensity = 1.0f;
+
 	// The proper value is set in the UpdateAsyncronous method
 	m_settings.intensity = 0.0f;
 }
@@ -77,31 +79,13 @@ void EveChildFogVolume::UnRegisterComponents()
 }
 
 /////////////////////////////////////////////////////////////////////////////////////
-// IEveSpaceObjectChild
-const char* EveChildFogVolume::GetName() const
-{
-	return m_name.c_str();
-}
-
-void EveChildFogVolume::SetName( const char* name )
-{
-	m_name = BlueSharedString( name );
-}
-
-void EveChildFogVolume::UpdateVisibility( const EveUpdateContext& updateContext, const Matrix& parentTransform, Tr2Lod parentLod )
-{
-}
-
+// EveSpaceObjectChild
 bool EveChildFogVolume::GetBoundingSphere( Vector4& sphere, BoundingSphereQuery query ) const
 {
 	sphere.GetXYZ() = m_boundingSphere.center;
 	sphere.w = m_boundingSphere.radius;
 
 	return true;
-}
-
-void EveChildFogVolume::UpdateSyncronous( const EveUpdateContext& updateContext, const EveChildUpdateParams& params )
-{
 }
 
 void EveChildFogVolume::UpdateAsyncronous( const EveUpdateContext& updateContext, const EveChildUpdateParams& params )

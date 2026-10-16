@@ -11,7 +11,10 @@
 EveChildPostProcessVolume::EveChildPostProcessVolume( IRoot* lockobj ) :
 	PARENTLOCK( m_volumes ),
 	PARENTLOCK( m_exclusionVolumes ),
-	m_boundingSphere( Vector3( 0.0, 0.0, 0.0 ), 0.0 )
+	m_boundingSphere( Vector3( 0.0, 0.0, 0.0 ), 0.0 ),
+	m_enabled( true ),
+	m_intensityMultiplier( 1.f ),
+	m_minimumTransitionTime( 0.f )
 {
 	m_postProcessAttributes.CreateInstance();
 	m_postProcessAttributes->intensity = 0.0f;
@@ -23,7 +26,7 @@ EveChildPostProcessVolume::~EveChildPostProcessVolume()
 
 void EveChildPostProcessVolume::RebuildBoundingSphere()
 {
-	CCP_STATS_ZONE( __FUNCTION__ );
+	TRINITY_STATS_ZONE( __FUNCTION__ );
 
 	m_boundingSphere.center *= 0.0f;
 	m_boundingSphere.radius *= 0.0f;
@@ -70,20 +73,7 @@ void EveChildPostProcessVolume::UnRegisterComponents()
 }
 
 /////////////////////////////////////////////////////////////////////////////////////
-// IEveSpaceObjectChild
-const char* EveChildPostProcessVolume::GetName() const
-{
-	return m_name.c_str();
-}
-
-void EveChildPostProcessVolume::SetName( const char* name )
-{
-	m_name = BlueSharedString( name );
-}
-
-void EveChildPostProcessVolume::UpdateVisibility( const EveUpdateContext& updateContext, const Matrix& parentTransform, Tr2Lod parentLod )
-{
-}
+// EveSpaceObjectChild
 
 bool EveChildPostProcessVolume::GetBoundingSphere( Vector4& sphere, BoundingSphereQuery query ) const
 {
@@ -93,26 +83,20 @@ bool EveChildPostProcessVolume::GetBoundingSphere( Vector4& sphere, BoundingSphe
 	return true;
 }
 
-void EveChildPostProcessVolume::UpdateSyncronous( const EveUpdateContext& updateContext, const EveChildUpdateParams& params )
-{
-}
-
 void EveChildPostProcessVolume::UpdateAsyncronous( const EveUpdateContext& updateContext, const EveChildUpdateParams& params )
 {
-	CCP_STATS_ZONE( __FUNCTION__ );
+	TRINITY_STATS_ZONE( __FUNCTION__ );
 
 	UpdateTransformFromParent( params );
 
 	RebuildBoundingSphere();
 
+	float targetIntensity = m_enabled ? 1.0f : 0.0f;
+
 	// global postprocess volumes have no volumes, so they are always on
-	if( m_volumes.size() == 0 )
+	if( m_enabled && m_volumes.size() != 0 )
 	{
-		m_postProcessAttributes->intensity = 1.0f;
-	}
-	else
-	{
-		m_postProcessAttributes->intensity = 0.0f;
+		targetIntensity = 0.0f;
 
 		Matrix inverseWorldTransform = Inverse( m_worldTransform );
 		Vector3 cameraInObjectSpace = Transform( Tr2Renderer::GetViewPosition(), inverseWorldTransform ).GetXYZ();
@@ -123,15 +107,15 @@ void EveChildPostProcessVolume::UpdateAsyncronous( const EveUpdateContext& updat
 			// Now find the intensity within the volumes
 			for( const auto& volume : m_volumes )
 			{
-				m_postProcessAttributes->intensity = std::max( m_postProcessAttributes->intensity, volume->GetIntensity( cameraInObjectSpace ) );
-				if( m_postProcessAttributes->intensity == 1.0f )
+				targetIntensity = std::max( targetIntensity, volume->GetIntensity( cameraInObjectSpace ) );
+				if( targetIntensity == 1.0f )
 				{
 					// early exit
 					break;
 				}
 			}
 
-			if( m_postProcessAttributes->intensity != 0.0f )
+			if( targetIntensity != 0.0f )
 			{
 				// check if the camera is within an exclusion volume
 				float negativeIntensity = 0.0f;
@@ -144,9 +128,24 @@ void EveChildPostProcessVolume::UpdateAsyncronous( const EveUpdateContext& updat
 						break;
 					}
 				}
-				m_postProcessAttributes->intensity = std::max( 0.0f, m_postProcessAttributes->intensity - negativeIntensity );
+				targetIntensity = std::max( 0.0f, targetIntensity - negativeIntensity );
 			}
 		}
+	}
+
+	targetIntensity *= m_intensityMultiplier;
+
+	if( m_minimumTransitionTime <= 0.f )
+	{
+		m_postProcessAttributes->intensity = targetIntensity;
+	}
+	else if( m_postProcessAttributes->intensity != targetIntensity )
+	{
+		float diff = targetIntensity - m_postProcessAttributes->intensity;
+		float lerpSpeed = std::max( std::max( abs( m_intensityMultiplier ), abs( diff ) ), 1.f );
+		float maxDiff = updateContext.GetDeltaT() * ( 1.0f / m_minimumTransitionTime ) * lerpSpeed;
+		diff = max( -maxDiff, min( diff, maxDiff ) );
+		m_postProcessAttributes->intensity += diff;
 	}
 }
 

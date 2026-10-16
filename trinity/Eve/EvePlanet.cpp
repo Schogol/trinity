@@ -7,6 +7,8 @@
 #include "TriDevice.h"
 #include "EveUpdateContext.h"
 #include "Curves/TriCurveSet.h"
+#include "Utilities/BoundingBox.h"
+#include "Utilities/Obb.h"
 
 const float EvePlanet::SCALE = 1000000.0f;
 
@@ -147,6 +149,26 @@ Vector3 EvePlanet::GetWorldPosition()
 Quaternion EvePlanet::GetWorldRotation()
 {
 	return m_rotation;
+}
+
+bool EvePlanet::GetOrientedBoundingBox( Vector3& localMin, Vector3& localMax, Matrix& localToWorld ) const
+{
+	if( m_radius <= 0.0f )
+	{
+		return false;
+	}
+
+	const float renderScale = m_renderScale > 0.0f ? m_renderScale : 1.0f;
+	const Matrix scaledTransform = CalculatePlanetScaleTransform( m_worldTransform, renderScale );
+	const float radius = m_radius / renderScale;
+	BoundingBoxInitialize( Vector4( scaledTransform.GetTranslation(), radius ), localMin, localMax );
+	localToWorld = IdentityMatrix();
+	return true;
+}
+
+bool EvePlanet::IsBoundingBoxReady() const
+{
+	return m_radius > 0.0f;
 }
 
 // --------------------------------------------------------------------------------
